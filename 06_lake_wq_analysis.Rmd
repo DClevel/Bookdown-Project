@@ -1,0 +1,296 @@
+---
+# title: "Lake Water Quality Analysis"
+# author: "Daniel Cleveland"
+# date: "2/28/2022"
+# output: html_document
+# editor options: 
+#   chunk_output_type: console
+---
+
+
+```{r 11 setup, include=FALSE, message = FALSE}
+library(tidyverse) # Tidy packages
+library(sf) #Spatial package that can read and create shapefiles 
+library(mapview) #Interactive maps
+library(LAGOSNE) #Lots and lots of clean lake data
+library(USAboundaries) #USA states and counties
+library(lubridate) #For dealing with date and time
+library(ggplot2)
+library(dplyr)
+
+#setwd("C:/Users/DClev/Documents/ESS580_copied_folder/Bookdown_Proj/Bookdown2")
+
+```
+
+# Lake Water Quality Analysis
+
+Assignment 5:  Geospatial Analysis Part II
+
+Learning to join spatial data with water quality data and analyze relationships
+
+
+## Preparing for LAGOS Analysis Assignment
+
+
+### Loading in data
+
+
+#### First download and then specifically grab the locus (or site lat longs)
+```{r 12 data-read, message = FALSE, warning = FALSE}
+#Lagos download script
+#lagosne_get(dest_folder = LAGOSNE:::lagos_path(),overwrite=T)
+
+#Load in lagos
+lagos <- lagosne_load()
+
+
+#Grab the lake centroid info
+lake_centers <- lagos$locus
+
+# Make an sf object 
+spatial_lakes <- st_as_sf(lake_centers,coords=c('nhd_long','nhd_lat'),
+                          crs=4326)
+
+#Grab the water quality data
+nutr <- lagos$epi_nutr
+
+#Look at column names
+#names(nutr)
+```
+
+#### Subset columns nutr to only keep key info that we want
+
+
+```{r, message = FALSE, warning = FALSE}
+clarity_only <- nutr %>%
+  select(lagoslakeid,sampledate,chla,doc,secchi) %>%
+  mutate(sampledate = as.character(sampledate) %>% ymd(.))
+
+```
+
+
+#### Keep sites with at least 200 observations 
+
+```{r, message = FALSE, warning = FALSE}
+
+#Look at the number of rows of dataset
+#nrow(clarity_only)
+
+chla_secchi <- clarity_only %>%
+  filter(!is.na(chla),
+         !is.na(secchi))
+
+# How many observatiosn did we lose?
+# nrow(clarity_only) - nrow(chla_secchi)
+
+
+# Keep only the lakes with at least 200 observations of secchi and chla
+chla_secchi_200 <- chla_secchi %>%
+  group_by(lagoslakeid) %>% 
+  dplyr::mutate(count = n()) %>%
+  filter(count > 200)
+
+
+```
+
+
+#### Join water quality data to spatial data
+
+```{r, message = FALSE, warning = FALSE}
+spatial_200 <- inner_join(spatial_lakes,chla_secchi_200 %>%
+                            distinct(lagoslakeid,.keep_all=T),
+                          by='lagoslakeid')
+
+
+```
+
+### Creating Map of Mean Chl_a
+
+```{r, message = FALSE, warning = FALSE}
+### Take the mean chl_a and secchi by lake
+
+mean_values_200 <- chla_secchi_200 %>%
+  # Take summary by lake id
+  dplyr::group_by(lagoslakeid) %>%
+  # take mean chl_a per lake id
+  dplyr::summarize(mean_chl = mean(chla,na.rm=T),
+            mean_secchi=mean(secchi,na.rm=T)) %>%
+  #Get rid of NAs
+  dplyr::filter(!is.na(mean_chl),
+         !is.na(mean_secchi)) %>%
+  # Take the log base 10 of the mean_chl
+  dplyr::mutate(log10_mean_chl = log10(mean_chl))
+
+#Join datasets
+mean_spatial <- inner_join(spatial_lakes,mean_values_200,
+                          by='lagoslakeid') 
+
+#Make a map
+mapview(mean_spatial,zcol='log10_mean_chl', legend = TRUE, layer.name = 'Mean Chlorophyl a Concentration (μg per L)')
+```
+
+
+## Class work
+
+#### 1) What is the correlation between Secchi Disk Depth and Chlorophyll a for sites with at least 200 observations?
+
+- Here, I just want a plot of chla vs secchi for all sites 
+
+```{r, message = FALSE, warning = FALSE}
+# creating simple scatter plot
+
+ggplot2::ggplot(mean_values_200, aes(x = mean_secchi, y = mean_chl)) +
+  geom_point() +
+  ylab("Mean Chlorophyll a Concentration (μg/L)")+
+  xlab("Secchi Disk Transparency (m)")
+  
+```
+
+The deeper the mean_secchi value, the lower the mean_chl value.  This relationship appears logarithmic as well.
+
+
+##### Why might this be the case? 
+
+It makes sense that as nutrient loads in the water increases, the higher the chlorophyll a content will be, and the less-clear the water becomes.  As the water becomes less clear, the depth at which the secchi disk disappears becomes shallower.   
+
+
+#### 2) What states have the most data? 
+***The student assumes this means the most chla and secchi combined data, only.  Therefore the student does not factor in the doc data.***
+
+##### 2a) First you will need to make a lagos spatial dataset that has the total number of counts per site.
+
+```{r, message = FALSE, warning = FALSE}
+
+chla_secchi_all <- clarity_only %>%
+  filter(!is.na(chla),
+         !is.na(secchi))%>%
+         #!is.na(doc))%>%
+  group_by(lagoslakeid) %>% 
+  dplyr::mutate(COUNT = n()) %>%
+  arrange(desc(COUNT))
+
+```
+
+
+##### 2b) Second, you will need to join this point dataset to the us_boundaries data. 
+
+```{r, message = FALSE, warning = FALSE}
+## Your code here
+all_states <- us_states()
+
+
+## Taking only lakes that are within the US States:
+us_lakes <- spatial_lakes[all_states,]
+
+## Joining us_lakes to chla_secchi_all
+### Keeping all of the chla and secchi data and adding the lake centroid to each lagoslakeid observation:
+chla_secchi_all_us <- left_join(chla_secchi_all,us_lakes,
+                                     by = 'lagoslakeid',
+                                     keep = FALSE)
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+## converting data to spatial data
+spatial_wq_us <- st_as_sf(chla_secchi_all_us,
+                          crs = 4326)
+
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+## Joining spatial_chla_secchi_all to all_states by geometry
+chla_secchi_all_by_state <- st_join(spatial_wq_us, all_states,
+                                    join = st_intersects)
+
+```
+
+
+##### 2c) Then you will want to group by state and sum all the observations in that state and arrange that data from most to least total observations per state. 
+
+```{r, message = FALSE, warning = FALSE}
+## grouping, counting, and arranging by count:
+wq_by_state <- chla_secchi_all_by_state %>%
+                      group_by(state_abbr)%>%
+                      dplyr::summarise(tot_obsv = n())%>%
+                      arrange(-tot_obsv)%>%
+                      filter(!is.na(state_abbr))
+
+## getting rid of geometry column
+cleaned_obs <- st_set_geometry(wq_by_state, NULL)
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+## plotting observations for comparison:
+ggplot(cleaned_obs, 
+       aes(x = reorder(state_abbr,-tot_obsv),y = tot_obsv)) +
+  geom_bar(stat="identity", width=0.5)+
+  xlab("State")+
+  ylab("Instances") +
+  ggtitle("Instances of Combined Chlorophyll a and Secchi Data per State")
+  
+```
+
+
+As can be seen in the above bar chart, Minnesota has the highest number of instances of combined secchi and chlorophyll a data, followed by Wisconsin and then New York.
+
+
+
+#### 3) Is there a spatial pattern in Secchi disk depth for lakes with at least 200 observations?
+#### ***Student assumes that this question is trying to ask, "Looking at a map of mean Secchi disk depth values of lakes having more than 200 Secchi disk depth measurements, can we detect a spatial pattern in mean Secchi disk depth?"***
+
+***(This assumption is based on lack of available unique geometry data for each individual secchi observation, and shear number of lakes having more than 200 Secchi observations)***
+
+***Also, student assumes that whether or not site has chla data is irrelevant for this question.***
+
+
+```{r, message = FALSE, warning = FALSE}
+## filtering nutr down to only lakes with 200+ secchi observations, ... 
+## ...and  selecting only lakeid, secchi, and observations columns...
+
+sdd_only <- nutr %>%
+  select(lagoslakeid,secchi)%>%
+  filter(!is.na(secchi))%>%
+  group_by(lagoslakeid)%>%
+  dplyr::mutate(lake_obsv = n())%>%
+  filter(lake_obsv > 200)%>%
+  arrange(-lake_obsv)
+
+
+```
+
+```{r,  messages = FALSE, warning = FALSE}
+## getting mean secchi disk depths for each lake id  
+sdd_means <- sdd_only %>%
+                        dplyr::group_by(lagoslakeid)%>%
+                        dplyr::summarise(sdd_mean = mean(secchi))
+```
+
+
+```{r plot prep 3330}
+##cleaning spatial lakes down to lagoslakeid and geometry:
+sp_lakes_cln <- spatial_lakes %>%
+                        select(lagoslakeid)
+
+
+##joining geometry onto the sdd means by lagoslakeid:
+sdd_means_geo <- left_join(sdd_means,sp_lakes_cln, 
+                          by = 'lagoslakeid',
+                          keep = FALSE)
+
+## converting sdd_means_geo to spatial object:
+sdd_plot <- st_as_sf(sdd_means_geo, crs=4326)
+
+```
+
+
+```{r plot 3331, message = FALSE, warning = FALSE}
+##  mapping the mean secchi disk depth values for all lakes having over 200 observations of secchi disk depth.
+
+mapview(sdd_plot, zcol = 'sdd_mean', legend = TRUE, layer.name = 'Mean Secchi 
+Disk Transarency (m)')
+```
+
+
+As can be seen by the map of mean secchi disk depths for lakes having over 200 secchi observations, the disk depths tend to be deepest in the Northeast United States.  The secchi disk depths tend to become shallower as the lake locations move further west.

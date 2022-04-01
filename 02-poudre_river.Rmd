@@ -1,0 +1,174 @@
+---
+# title: "Discharge Data Example"
+# author: "Matt Ross *and* **Daniel Cleveland**"
+# date: "`r format(Sys.time(), '%d %B, %Y')`"
+# output: html_document: 
+#     toc: true
+#     toc_float: true
+
+
+---
+
+```{r 1 setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(dataRetrieval)
+library(dygraphs)
+library(xts)
+
+setwd("C:/Users/DClev/Documents/ESS580_copied_folder/Bookdown_Proj/Bookdown2")
+
+```
+
+# Poudre River: RMarkdown and GitHub Familiarization 
+
+Assignment 1: Learning to Create GitHub Website from an RMarkdown file.
+
+
+## Methods 
+*(Learning Simple Formatting)*
+
+The Poudre River at Lincoln Bridge is:
+
+  - Downstream of only a little bit of urban stormwater
+
+  - Near Odell Brewing CO
+  
+  - Near an open space area and the Poudre River Trail
+  
+  - **Downstream of many agricultral diversions**
+
+
+### SiteDescription 
+*(How to insert web links)*
+
+A link was given to insert the below image found online:
+
+![](https://waterdata.usgs.gov/nwisweb/local/state/co/text/pics/06752260big.jpg)
+
+
+### Data Acquisition and Plotting tests 
+*(Unused section)*
+
+### Data Download 
+*(How to hide code from output)*
+
+
+```{r 2 downloader, echo = FALSE}
+
+q <- readNWISdv(siteNumbers = '06752260',
+                parameterCd = '00060',
+                startDate = '2017-01-01',
+                endDate = '2022-01-01') %>%
+  rename(q = 'X_00060_00003')
+
+
+```
+
+
+
+### Static Data Plotter 
+*(Creating First Plot)*
+
+
+```{r 3,  warning = FALSE, fig.width = 8, fig.height = 5, echo = FALSE}
+
+ggplot(q, aes(x = Date, y = q)) + 
+  geom_line() + 
+  ylab('Discharge (cfs)') + 
+  ggtitle('Discharge in the Poudre River, Fort Collins')
+
+```
+
+
+### Interactive Data Plotter *(Creating Interactive Plots)
+*(Creating First Interactive Plot)*
+
+```{r 4 Interactive Plotter, echo = FALSE}
+
+q_xts <- xts(q$q, order.by = q$Date)
+
+
+dygraph(q_xts) %>%
+  dyAxis("y", label = "Discharge (cfs)")
+  
+  
+  
+```
+
+
+## Results 
+*(Unused Section)*
+
+
+
+
+## Assignment 
+
+
+This assignment will be primarily about demonstrating some expertice in using
+RMarkdown, since we will be using Rmds as the primary form of homework and 
+assignments. With that in mind, your assignment for this homework is to:
+
+
+1) Fork the example repository into your personal GitHub
+
+2) Create an RStudio project from your Personal clone of the Repo. 
+
+3) Create a table of contents that is floating, but displays three levels of
+headers instead of two (by editing the content at the beginning of the document)
+
+4) Make a version of the `dygraph` with points and lines by using rstudio's
+dygraph [guide](https://rstudio.github.io/dygraphs/)
+
+5) Writing a paragraph on the Poudre river with at least three hyperlinks,
+**two bolded sections**, and one *italicized phrase*. The content of this paragraph
+is not vital, but try to at least make it true and interesting, and, of course,
+don't plagiarize. 
+
+6) Knit that document, and then git commit and push to your personal GitHub.
+
+7) Use the GitHub -> Settings -> Pages tab to create a website of your report.
+
+8) Bonus, make the timestamp in the header dynamic. As in it only adds
+todays date, not just a static date you enter. 
+
+9) Bonus, create an "index_talk.Rmd" version of your document using the
+`revealjs` package. Add link to your original report-style document. 
+
+
+
+
+### DyGraph example. 
+
+*(Practicing plotting)*
+
+```{r 5 DyGraph Example}
+
+dygraph(q_xts) %>%
+  dyAxis("y", label = "Discharge (cfs)")%>%
+  dyOptions(drawPoints = TRUE, pointSize = 2)
+  
+
+```
+
+
+### Poudre Paragraph
+
+*(Practicing Formatting and inserting links)*
+
+According to [VisitFortCollins.com](https://www.visitftcollins.com/things-to-do/parks-open-spaces/cache-la-poudre-river/)
+
+> 
+"The Poudre (pronounced pooh-der) is **Colorado’s only nationally designated “Wild & Scenic” River**. The Poudre has gained recognition of late because 2018 marked the 50th anniversary of the Wild & Scenic Rivers Systems. The Cache la Poudre National Heritage Area was established in 1983. **There are three national Heritage Areas in Colorado, including the Cache La Poudre River Natural Heritage Area.** There are a number of ways to explore the area, *including walking and biking tours* near parks, lakes, the Poudre River Trail and numerous historical sites."
+
+
+From the National Park Service page on [Cache la Poudre River National Heritage Area](https://www.nps.gov/places/cache-la-poudre-river-national-heritage-area.htm), we learn the following.
+
+>
+"The Cache la Poudre River National Heritage Area (CALA), designated by Congress in 2009, is one of 55 National Heritage Areas throughout the United States and was the first to be established west of the Mississippi. The CALA extends for ***45 miles*** and includes the lands within the 100-year flood plain of the Cache la Poudre River. It begins in Larimer County at the eastern edge of the Roosevelt National Forest and ends in Weld County, at the confluence of the South Platte River just east of Greeley."
+
+
+
+The [Forest Service](https://www.fs.usda.gov/recarea/arp/recarea/?recid=81605) provides [this map](https://www.fs.usda.gov/Internet/FSE_DOCUMENTS/fseprd587689.pdf) of the Poudre River, on their Arapaho & Roosevelt National Forests Pawnee National Grassland webpage.  

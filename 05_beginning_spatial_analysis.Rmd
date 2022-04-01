@@ -1,0 +1,230 @@
+---
+# title: "LAGOS Spatial Analysis"
+# author: "Daniel Cleveland"
+# date: "2/24/2021"
+# output: html_document
+# editor_options: 
+#   chunk_output_type: console
+---
+
+
+
+```{r 9 setup, include=FALSE}
+library(tidyverse) # Tidy packages
+library(ggplot2)
+library(hrbrthemes)
+library(dplyr)
+library(sf) #Spatial package that can read and create shapefiles 
+library(mapview) #Interactive maps
+library(LAGOSNE) #Lots and lots of clean lake data
+library(USAboundaries) #USA states and counties
+library(plyr) ## I'm putting this in to count observations using ddply function
+
+setwd("C:/Users/DClev/Documents/ESS580_copied_folder/Bookdown_Proj/Bookdown2")
+```
+
+
+
+
+# LAGOS Data Analysis
+
+Assignment 4:  Geospatial Analysis Part I
+
+Using the LAGOS dataset to learn how to work with spatial data.
+
+
+## Setting Up for the Assignment
+
+### Loading in data
+
+#### First download and then specifically grab the locus (or site lat longs)
+
+```{r 10 data-read, warning=FALSE}
+# #Lagos download script
+LAGOSNE::lagosne_get(dest_folder = LAGOSNE:::lagos_path())
+
+#Load in lagos
+lagos <- lagosne_load()
+
+#Grab the lake centroid info
+lake_centers <- lagos$locus
+
+
+
+```
+
+
+#### Convert to spatial data
+```{r, warning=FALSE}
+#Look at the column names
+#names(lake_centers)
+
+#Look at the structure
+#str(lake_centers)
+
+#View the full dataset
+#View(lake_centers %>% slice(1:100))
+
+spatial_lakes <- st_as_sf(lake_centers,coords=c('nhd_long','nhd_lat'),
+                          crs=4326) %>%
+  st_transform(2163)
+
+#Subset for plotting
+subset_spatial <- spatial_lakes %>%
+  slice(1:100) 
+
+subset_baser <- spatial_lakes[1:100,]
+
+#Dynamic mapviewer
+mapview(subset_spatial, legend = TRUE, layer.name = 'First 100 LAGOS Lakes')
+
+```
+
+
+#### Subset to only Minnesota
+
+```{r, warning=FALSE}
+states <- us_states()
+
+#Plot all the states to check if they loaded
+#mapview(states)
+minnesota <- states %>%
+  filter(name == 'Minnesota') %>%
+  st_transform(2163)
+
+#Subset lakes based on spatial position
+minnesota_lakes <- spatial_lakes[minnesota,]
+
+#Plotting the first 1000 lakes
+minnesota_lakes %>%
+  arrange(-lake_area_ha) %>%
+    slice(1:1000) %>%
+  mapview(.,zcol = 'lake_area_ha', legend = TRUE, layer.name = 'Lakes Area (hectares)')
+```
+
+
+
+## Assignment
+
+
+### 1) Show a map outline of Iowa and Illinois (similar to Minnesota map upstream)
+
+```{r, warning=FALSE}
+#Plotting Illinois and Iowa on same map:
+
+illinois_iowa <- states %>%
+  arrange(name)%>%
+  filter(name %in% c('Illinois','Iowa'))%>%
+  st_transform(2163)
+mapview(illinois_iowa, legend = TRUE, layer.name = 'Iowa and Illinois')
+
+```
+
+
+
+### 2) Subset LAGOS data to these sites, how many sites are in Illinois and Iowa combined? How does this compare to Minnesota?
+
+```{r, warning=FALSE}
+#Subset lakes based on spatial position
+illinois_iowa_lakes <- spatial_lakes[illinois_iowa,] 
+
+# ddply(illinois_iowa_lakes,.(lagoslakeid),nrow)
+
+str(illinois_iowa_lakes)
+
+```
+
+
+There are **16,466 different sites** in Illinois and Iowa combined.
+
+In Minnesota alone there are **29,038 sites**.
+
+
+
+### 3) What is the distribution of lake size in Iowa vs. Minnesota?
+
+- Here I want to see a histogram plot with lake size on x-axis and frequency on 
+y axis (check out geom_histogram)
+
+```{r, warning=FALSE}
+# What is the "state_zoneid" value for Iowa?
+## (We already know that Minnesota's state_zoneid = State_14)
+
+
+## Confirmed that Iowa = State_13
+
+# iowa <- states %>%
+#   arrange(name)%>%
+#   filter(name %in% c('Iowa'))%>%
+#   st_transform(2163)
+# mapview(iowa)
+# 
+# iowa_lakes <- spatial_lakes[iowa,]
+# str(iowa_lakes)
+```
+
+(Found that Iowa indeed has state_zoneid of "State_13" in the spatial_lakes data.)
+
+
+```{r, warning=FALSE}
+# Getting Minnesota vs Iowa Data in one sf dataframe
+
+## creating spatial filter boundary:
+minnesota_iowa <- states %>%
+  arrange(name)%>%
+  filter(name %in% c('Minnesota','Iowa'))%>%
+  st_transform(2163)
+mapview(minnesota_iowa, legend = TRUE, layer.name = 'Minnesota and Iowa')
+```
+
+
+```{r, warning=FALSE}
+## filtering data by area, creating state_name column, removing unneccesary data
+minnesota_iowa_lakes <- spatial_lakes[minnesota_iowa,] %>%
+  mutate(state_name = case_when(state_zoneid == "State_14" ~ "Minnesota",
+                                state_zoneid == "State_13" ~ "Iowa",
+                                TRUE ~ "error")) %>%
+  select(lake_area_ha,state_name)%>%
+  filter(!state_name == "error")
+       
+arrange(minnesota_iowa_lakes, state_name, lake_area_ha)
+
+
+```
+
+
+```{r, warning=FALSE, message = FALSE}
+# creating histogram:
+
+ggplot(minnesota_iowa_lakes, aes(x=log10(lake_area_ha), fill=state_name)) +
+    geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity') +
+    xlab('log10(lake area (in hectares))')+
+    scale_fill_manual(values=c("#404080", "#69b3a2")) +
+    theme_ipsum() +
+    labs(fill="")+
+    guides(col=guide_legend("State"))
+    
+
+```
+
+
+Comparing the distributions of lake size on the log10 scale for Iowa on top of Minnesota reveals that the both states have very similar lake area distributions.  Minnesota has more lakes than Iowa, but the distribution of those lake by area is very comparable to Iowa.  Minnesota also appears to have larger lakes than Iowa.  
+
+
+### 4) Make an interactive plot of lakes in Iowa and Illinois and color them by lake area in hectares
+
+```{r, warning=FALSE, message = FALSE}
+# Creating interactive map for the largest 1000 lakes across Illinois and Iowa
+illinois_iowa_lakes %>%
+  arrange(-lake_area_ha) %>%
+  slice(1:1000) %>%
+  mapview(.,zcol = 'lake_area_ha', legend = TRUE, layer.name = 'Lake Area (hectares)')
+
+
+```
+
+
+### 5) What other data sources might we use to understand how reservoirs and natural lakes vary in size in these three states? 
+
+We could perhaps analyze some of the shapefiles that USGS provides for North American lakes:
+https://www.sciencebase.gov/catalog/item/4fb55df0e4b04cb937751e02

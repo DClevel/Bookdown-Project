@@ -1,0 +1,703 @@
+---
+# title: "Regressions (with Weather and Corn Yields)"
+# author: "Daniel Cleveland"
+# date: "`r format(Sys.time(), '%d %B, %Y')`"
+# output: html_document
+# editor_options:
+#   chunk_output_type: console
+---
+
+```{r 13 setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(R.matlab)
+library(rnassqs)
+library(ggplot2)
+library(dplyr)
+library(plm)
+        
+setwd("C:/Users/DClev/Documents/ESS580_copied_folder/Bookdown_Proj/Bookdown2")
+
+```
+
+# Regressions
+
+Assignment 6:  Using PRISM weather data and USDA NASS crop data to learn multiple regression
+
+## Weather Data Analysis
+
+### Load the PRISM daily maximum temperature
+```{r 14 tmax data, message = FALSE, warning = FALSE}
+# daily max temperature
+# dimensions of the data:  counties x days x years
+prism <- readMat("data_reg/prismiowa.mat")
+
+
+#look at all temp for county #1 in first year of data (1981):
+t_1981_c1 <- prism$tmaxdaily.iowa[1,,1]
+t_1981_c1[366]  #(shows that 1981 was not a leap year.)
+plot(1:366, t_1981_c1, type = "l")
+
+ggplot()+
+  geom_line(mapping = aes(x=1:366, y=t_1981_c1))+
+  theme_bw()+
+  xlab("day of year") +
+  ylab("daily maximum temperature (°C)")+  #use Alt+0176 as keyboard shortcut to get the degree symbol!!!
+  ggtitle("Daily Maximum Temperature for County #1 in Iowa")
+
+  
+```
+
+
+```{r 15 tidying up, message = FALSE, warning = FALSE}
+# assign dimension names to tmax matrix
+dimnames(prism$tmaxdaily.iowa) <- list(prism$COUNTYFP, 
+                                       1:366,
+                                       prism$years)
+
+# converting 3D matrxi to a dataframe:
+tmaxdf <- as.data.frame.table(prism$tmaxdaily.iowa)
+
+# relabel the columns
+colnames(tmaxdf) <- c("countyfp","doy","year","tmax")
+tmaxdf <- tibble(tmaxdf) # tidying up
+
+```
+
+
+### Temperature Trends
+
+#### Summer Temperature Trends:  Winneshiek County
+
+```{r 16 temp trends, message = FALSE, warning = FALSE}
+# converting some factors into dbl:
+tmaxdf$doy <- as.numeric(tmaxdf$doy)
+tmaxdf$year <- as.numeric(as.character(tmaxdf$year))
+
+# creating variable for containing summer temp values of county 191
+winnesummer <- tmaxdf %>%
+  filter(countyfp == 191 & doy >= 152 & doy <= 243) %>%
+  dplyr::group_by(year)%>%
+  dplyr::summarize(meantmax = mean(tmax))
+```
+
+
+```{r 17 plotting summer temps, message = FALSE, warning = FALSE}
+ggplot(winnesummer, mapping = aes(x = year, y = meantmax))+
+  geom_point()+
+  theme_bw() +
+  labs(x = "year", y = 'Maximum Temperature (°C)')+
+  ggtitle("Average Daily Max Summer Temperature for Winneshiek County, Iowa")
+  geom_smooth(method = lm)
+
+lm_summertmax <- lm(meantmax ~ year, winnesummer)
+summary(lm_summertmax)
+
+
+```
+
+#### Winter Temperatures trends:  Winneshek County
+
+```{r 18 getting winter temps for Winneshek, message = FALSE, warning = FALSE}
+# creating variable for containing winter temp values of county 191
+winnewinter <- tmaxdf %>%
+  filter(countyfp == 191 & (doy <= 59 | doy >= 335) & !is.na(tmax)) %>%
+  dplyr::group_by(year)%>%
+  dplyr::summarize(meantmax = mean(tmax))
+```
+
+
+```{r 19 plotting winter temps for Winneshek, message = FALSE, warning = FALSE}
+ggplot(winnewinter, mapping = aes(x = year, y = meantmax))+
+  geom_point()+
+  theme_bw() +
+  labs(x = "year", y = "Average Daily Max Winter Temperature (°C)")+
+  ggtitle('Average Daily Max Temperature in Winter for Winneshiek County, Iowa')+
+  geom_smooth(method = lm)
+```
+
+
+```{r 20 looking linear regression for winter, message = FALSE, warning = FALSE}
+lm_wintertmax <- lm(meantmax ~ year, winnewinter)
+summary(lm_wintertmax)
+
+```
+
+
+### Multiple Regression -- Quadratic Time Trend
+
+```{r, message = FALSE, warning = FALSE}
+winnewinter$yearsq <- winnewinter$year^2
+
+lm_wintertmaxquad <- lm(meantmax ~ year + yearsq, winnewinter)
+#summary(lm_winntertmaxquad)
+winnewinter$fitted <- lm_wintertmaxquad$fitted.values
+
+ggplot(winnewinter)+
+  geom_point(mapping = aes(x = year, y = meantmax)) +
+  geom_line(mapping = aes(x = year, y = fitted))+
+  theme_bw() +
+  labs(x = "year", y = "Average Daily Max Winter Temperature (°C)")+ 
+  ggtitle("Average Max Daily Winter Temperature for Winneshiek County, Iowa")
+
+
+```
+
+
+### Download NASS corn yield data
+
+```{r 21 corn yield downloading and converting to numeric, message = FALSE, warning = FALSE, results = 'hide'}
+
+## set our API key with NASS
+nassqs_auth(key = "6C0A99BB-3CB7-3E99-A699-B9DB7FDB8D16")
+
+## parameters to query on
+params <- list(commodity_desc = "CORN", util_practice_desc = "GRAIN",
+              prodn_practice_desc = "ALL PRODUCTION PRACTICES",
+              year__GE = 1981, state_alpha = "IA")
+
+# download
+cornyieldsall <- nassqs_yields(params)
+
+#convert to numeric
+cornyieldsall$county_ansi <- as.numeric(cornyieldsall$county_ansi)
+cornyieldsall$yield <- as.numeric(cornyieldsall$Value)
+cornyieldsall$year <- as.numeric(cornyieldsall$year)
+
+```
+
+
+```{r 23 cleaning and filtering dataset, message = FALSE, warning = FALSE}
+#clean and filter dataset
+cornyields <- select(cornyieldsall,county_ansi, 
+                     county_name, yield, year)%>%
+  filter(!is.na(county_ansi) & !is.na(yield))
+
+# make a tibble
+cornyields <- tibble(cornyields)
+
+```
+
+
+## Assignment
+
+### Question 1a: Extract Winneshiek County corn yields, fit a linear time trend, make a plot. Is there a significant time trend?
+
+```{r 24 question 1a}
+# sifting out to have only the Winneshiek data
+wnnshk_uncln <- cornyields %>%
+  filter(county_name == "WINNESHIEK")
+#making sure that there aren't any rows with NAs:
+wnnshk <- na.omit(wnnshk_uncln) 
+
+```
+
+
+```{r}
+# Fitting linear regression for time trend:
+lm_wnnshk <- lm(yield ~ year, data = wnnshk)
+wnnshk$linear <- lm_wnnshk$fitted.values
+
+summary(lm_wnnshk)
+
+```
+
+According the summary statistics for the linear regression model fitted to the yield ~ year data for Winneshiek, there is indeed a quite significant time trend.  The slope has a value of 2.457 yield units increase per year, and the p-value for that slope is 1.77e-13.    
+
+
+```{r}
+# plotting yield ~ time along with linear regression:
+ggplot(wnnshk) +
+  geom_point(mapping = aes(x = year, y = yield)) +
+  geom_line(mapping = aes(x = year, y = linear)) +
+  theme_bw() +
+  labs(x = "year", y = "yield (bu/acre)")+
+  ggtitle("Corn Yield in Winneshiek County, Iowa")
+
+```
+
+
+
+### Question 1b: Fit a quadratic time trend (i.e., year + year^2) and make a plot. Is there evidence for slowing yield growth? 
+
+```{r}
+## Fitting quadratic time trend
+wnnshk$yearsq <- wnnshk$year^2
+
+qd_wnnshk <- lm(yield ~ (year + yearsq), data = wnnshk)
+wnnshk$quadratic <- qd_wnnshk$fitted.values
+
+summary(qd_wnnshk)
+
+```
+
+```{r}
+## plotting quadratic transform:
+
+ggplot(wnnshk) +
+  geom_point(mapping = aes(x = year, y = yield)) + 
+  geom_smooth(mapping = aes(x = year, y = quadratic))+
+  labs(x = "year", y = "yield (bu/acre)")+
+  ggtitle('Corn Yield in Winneshiek County, Iowa')
+
+
+```
+
+In the summary statistics for the quadratic regression model, we see that the coefficient for yearsq is 7.641e-03, a positive value, but it's p-value is large at 0.723.  Due to this large p-value, we conclude that the quadratic regression model does not fit the data well.  We do not have evidence that yields are either slowing or growing with each year.  
+
+*If the p-value were small (< 0.05), we would conclude that yields are growing with each year, due to the fact that the yearsq coefficient is positive -- meaning that the model is U-shaped rather than n-shaped -- and that the data would clearly be the right-side of the U (as the plot makes obvious).* 
+
+
+### Question 2 -- Time Series: Let's analyze the relationship between temperature and yields for the Winneshiek County time series. Use data on yield and summer avg Tmax. Is adding year or Tmax^2 to your model helpful? Make a plot and interpret the results.
+
+```{r}
+# Joining the yield data to the temp data.
+## (Note:  temp data ends at 2018 and yield goes to 2021.)
+
+wnnshk_ty <- left_join(winnesummer, wnnshk, by = 'year')%>%
+  filter(!is.na(yield), !is.na(meantmax))
+
+```
+
+#### First Looking at the Linear Model for Yield ~ MeanTmax
+```{r}
+# Creating linear model for analyzing Yield ~ meanTmax:
+
+lm_w_ty <- lm(yield ~ meantmax, data = wnnshk_ty)
+wnnshk_ty$lin_ty <- lm_w_ty$fitted.values
+
+# summary stats for linear model
+summary(lm_w_ty)
+```
+
+***Note: The summary statistics for the linear model prove that it is not a good fit for this data.  The p-value for the coefficient of meantmax is 0.2902, which is much greater than 0.05.***
+
+```{r}
+# plotting linear model
+ggplot(wnnshk_ty) +
+  geom_point(mapping = aes(x = meantmax, y = yield)) +
+  geom_line(mapping = aes(x = meantmax, y = lin_ty)) +
+  theme_bw() +
+  labs(x = "Average Daily Maximum Summer Temperature (°C)", y = "Corn Yield (bu/acre)")+
+  ggtitle("Corn Yield vs. Average Daily Max Summer Temperature in Winneshiek County, Iowa")
+
+```
+
+#### Second, Examining the Quadratic Model for Yield ~ (MeanTmax^2 + MeanTmax)
+```{r}
+# Creating quadratic model for analyzing Yield ~ (Tmax^2 + Tmax)
+
+## first creating meantmaxsq data:
+wnnshk_ty$meantmaxsq <- wnnshk_ty$meantmax^2
+## now generating quadratic model: 
+qd_w_ty <- lm(yield ~ (meantmax + meantmaxsq), data = wnnshk_ty)
+## pulling fitted values from quadratic model and adding to dataframe:
+wnnshk_ty$qd_ty <- qd_w_ty$fitted.values
+## looking at the quadratic model's summary statistics:
+summary(qd_w_ty)
+```
+
+
+```{r}
+# plotting quadratic model
+ggplot(wnnshk_ty)+
+  geom_point(mapping = aes(x = meantmax, y = yield)) +
+  geom_smooth(mapping = aes(x = meantmax, y = qd_ty))+
+  theme_bw()+
+  labs(x = "Average Daily Max Summer Temperature (°C)", 
+       y = "Corn Yield (bu/acre)")+
+  ggtitle("Corn Yield vs. Average Daily Max Summer Temperature in Winneshiek County, Iowa")
+
+```
+
+
+The summary statistics for the quadratic regression model for Yield ~ (meantmax^2 + meantmax) shows that the quadratic model is indeed helpful for understanding the trend of the data.  We can tell this by looking at the p-values for coefficients of meantmax, meantmaxsq, and the intercept, all of which are quite small and substantially lower than 0.05.  
+
+The plot of this quadratic model, as shown above, clearly displays a negative parabolic curve (which regression model's summary statistics also indicated).  This type of relationship was to be expected, as optimum temperatures for maximizing yields must be neither too low nor too high.
+
+The quadratic model for this data should be accepted, while the linear model should be rejected. 
+
+
+### Question 3 -- Cross-Section: Analyze the relationship between temperature and yield across all counties in 2018. Is there a relationship? Interpret the results.
+
+```{r}
+# Filtering down the temperature data to only what we need...
+t_18 <- tmaxdf %>%
+  filter(year == 2018, (doy > 151 & doy < 244)) %>%
+# ...then grouping by county...
+  dplyr::group_by(countyfp) %>%
+# ...and calculating meanTmax for each county
+  dplyr::summarise(meantmax = mean(tmax)) 
+
+# going ahead and converting countyfp to numeric:
+t_18$countyfp <- as.numeric(as.character(t_18$countyfp))
+
+```
+
+
+```{r}
+# Filtering down cornyields data to only 2018
+cy_18 <- cornyields %>%
+  filter(year == 2018, 
+         # making sure all NA's are gone
+         !is.na(yield), !is.na(county_name),!is.na(county_ansi)) %>%
+        # creating countyfp column in preparation for joining
+  mutate(countyfp = county_ansi)
+
+```
+
+
+```{r}
+# Joining t_18 to cy_18, and selecting down to meantmax, yield, countyfp
+
+tcy_18 <- left_join(cy_18,t_18, by = "countyfp") %>%
+  select(countyfp, meantmax, yield) %>%
+  filter(!is.na(countyfp),!is.na(meantmax),!is.na(yield))
+
+```
+
+
+```{r}
+# Creating quadratic regression model
+
+## calculating meantmaxsq values
+tcy_18$meantmaxsq <- tcy_18$meantmax^2
+## creating quadratic model
+qd_tcy_18 <- lm(yield ~ (meantmaxsq + meantmax), tcy_18)
+## adding model's values to tcy_18 dataframe
+tcy_18$qd_yvalues <- qd_tcy_18$fitted.values
+
+summary(qd_tcy_18)
+
+# Saving fitted values for plotting
+
+```
+
+
+```{r}
+# Plotting Yield ~ MeanTmax for 2018 (all Iowa counties)
+
+ggplot(tcy_18) +
+  geom_point(mapping = aes(x = meantmax, y = yield))+
+  geom_smooth(mapping = aes(x = meantmax, y = qd_yvalues))+
+  theme_bw() +
+  labs(x = "Average Daily Max Summer Temperature (°C)", 
+       y = "Corn Yield (bu/acre)",
+       title = "Corn Yield vs. Average Daily Max Summer Temp by Iowa County")
+       
+```
+
+We would expect that the relationship between mean summer maximum daily temperatures and corn yields across all Iowa counties for the year of 2018 would be very similar to the relationship between the same variables for Winneshiek County  across all years (shown in the previous question).  As such, we begin by fitting a quadratic model.
+
+In the summary statistics for the quadratic regression model for (corn yield) ~ (meantmax^2 + meantmax), shown above, we can see that p-values for all coefficients are substantially less than 0.05.  This indicates that the quadratic model does indeed fit well to the data.  Further, we see that this model indicates that corn yields can be expected to be highest when the average maximum daily temperature for the summer months is 28°C.
+
+
+### Question 4 -- Panel: 
+
+One way to leverage multiple time series is to group all data into what is called a "panel" regression. Convert the county ID code ("countyfp" or "county_ansi") into factor using as.factor, then include this variable in a regression using all counties' yield and summer temperature data. 
+
+**How does the significance of your temperature coefficients (Tmax, Tmax^2) change?** 
+
+**Make a plot comparing actual and fitted yields and interpret the results of your model.**
+
+- *Student's question: are you asking me to create a plot that has actual yields on the y-axis and fitted yield on the x-axis?  I'm not sure what you're asking.  It seems to me that what we really want is model that helps predict corn yields across all counties...*
+
+
+```{r}
+## getting the temperature data:
+
+### Filtering down the temperature data to only what we need...
+t <- tmaxdf %>%
+  filter(doy > 151 & doy < 244) %>%
+### ...then grouping by county...
+  dplyr::group_by(countyfp,year) %>%
+### ...and calculating meanTmax for each county...
+  dplyr::summarise(meantmax = mean(tmax)) %>%
+### ...adding meantmaxsq in prep for quadratic regression model...
+  mutate(meantmaxsq = meantmax^2)
+
+## going ahead and converting countyfp to numeric:
+t$countyfp <- as.numeric(as.character(t$countyfp))
+```
+
+```{r}
+# Getting the Yield Data
+
+cy <- cornyields %>%
+  # making sure all NA's are gone
+  filter(!is.na(yield), !is.na(county_name),!is.na(county_ansi)) %>%
+  # creating countyfp column in preparation for joining
+  mutate(countyfp = county_ansi)
+
+```
+
+```{r}
+# Joining Temperature Data to Yield Data by county and year
+tcy <- inner_join(cy,t,by = c("countyfp", "year"))
+
+## converting countyfp to factor (as instructed)
+tcy$countyfp <- as.factor(tcy$countyfp)
+
+## cleaning out unneeded columns:
+tcy <- select(tcy,-c("county_ansi", "county_name"))
+## reordering columns to proper positions:
+tcy <- tcy[,c(3,2,1,4,5)]
+
+```
+
+#### **First attempting the panel regression as instructed, without using the panel regression function**
+
+```{r}
+# First creating lm() that does NOT factor in countyfp, but does factor both meantmax and meantmaxsq:
+panel_lm_NO_cfp <- lm(yield ~ (meantmaxsq + meantmax), data = tcy)
+summary(panel_lm_NO_cfp)
+
+```
+
+
+```{r}
+# Creating lm() that factors in meantmax, meantmaxsq, AND countyfp
+panel_lm_W_cfp <- lm(yield ~ (meantmaxsq + meantmax + countyfp), data = tcy)
+summary(panel_lm_W_cfp)
+
+```
+
+** Based on the results I'm seeing, I believe that I must be making some kind of mistake, but I'm not sure what that could be.  I think there should be a difference in the p-values for the coefficients, but I don't see any...**
+
+From examining the two different linear regression models, one factoring in countyfp and one not, that including the countyfp as a factor in the regression formula did not affect the significance of the temperature coefficients to any detectable degree.  However, including countyfp did slightly alter the values of the coefficients.  With the inclusion of countyfp as a factor in the linear regression, meantmax coefficient changed from -3.1665 to -3.1324 while meantmaxsq changed from 168.9590 to 167.9699.
+
+    
+
+
+#### Plotting Actual Yield vs. Fitted Yield
+
+```{r}
+#  Trying to obtain fitted values from the panel regression:
+tcy$p_lm_fit2 <- panel_lm_W_cfp$fitted.values
+
+```
+
+```{r}
+#  Plotting yield vs p_lm_fit2
+ggplot(tcy) +
+  geom_point(mapping = aes(x = p_lm_fit2, y = yield))+
+  theme_bw()+
+  labs(title = "Corn Yield vs Panel Regression Fitted Value",
+       subtitle = "All Iowa Counties, 1981 - 2018",
+       x = "Panel Regression Fitted Value",
+       y = "Actual Corn Yield (bu/acre)")
+  
+```
+
+
+
+
+#### This is the Student Trying to Leverage the Panel Regression Funciton plm() Instead
+
+##### **First Determining whether Fixed Effects or Random Effects Model is Appropriate**
+
+```{r}
+# First testing the the pooled OLS model:
+
+plmtest(yield ~ (meantmaxsq + meantmax),
+        data = tcy,
+        effect = "twoways",
+        type = "ghm")
+
+```
+
+The p-value for this GHM test is very small, and we therefore reject the null hypothesis that there are no significant effects.  To be honest, I don't understand what this test is really testing.  I just know that we're supposed to run prior to running a panel regression, according to Columbia University:
+(https://blogs.cul.columbia.edu/spotlights/2018/11/16/introduction-to-r-plm-package-3/)
+
+
+```{r}
+#running the Hausman test to determine whether fixed or random effects model is best
+
+phtest(yield ~ (meantmaxsq + meantmax), 
+       data = tcy,
+       model = c("within","random"))
+
+```
+
+The p-value for this Hausman test is small, therefore we conclude that fixed effects model is best.
+
+
+#### Continuing wiht Fixed Effects model
+
+```{r}
+# Performing fixed effects panel regression
+p_tcy = pdata.frame(tcy, index = c("countyfp", "year"))
+
+pan_reg_fe <- plm(yield ~ (meantmaxsq + meantmax),
+                data = p_tcy,
+                model = "within")
+### saving fitted values to p_tcy
+p_tcy$fe <- pan_reg_fe$model$yield
+
+### also getting the residuals
+p_tcy$residuals <- pan_reg_fe$residuals 
+
+### TRYING FE - RESIDUALS
+p_tcy$fitted <- p_tcy$fe - p_tcy$residuals
+
+summary(pan_reg_fe)
+
+```
+
+
+NOTE:  In comparing the coefficient results on the panel regression that used the plm() function (immediately above) to that which used the lm() function (further above), we see that the coefficients of meantmax and meantmaxsq are essentially exactly the same.  
+
+#### Now using the lm() function instead
+
+```{r}
+
+#   TRYING TO FIGURE OUT HOW TO PLOT "actual and fitted yields and interpret the results of your model." 
+
+## WHAT IF I DO A REGRESSION ON TOP OF THE plm to get a smooth line?
+
+### I think that this is like completing a regression among all of the fitted values.
+
+reg_panreg <- lm(fitted ~ (meantmaxsq + meantmax), p_tcy)
+
+p_tcy$reg_panreg_fit <- reg_panreg$fitted.values
+
+summary(reg_panreg)
+
+```
+
+Interestingly enough, this regression of the panel regression produces the same coefficient values as the linear regression that did not factor in the countyfp.  
+
+This is likely wrong.  But if we take the intercept value from the regression that did not include countyfp as a factor, and use the coefficients from the panel regression that did include countyfp as a factor we get the following equation for yield as a function of meantmax:
+
+yield = -3.13244meantmaxsq    + 167.96992meantmax    -2098.621
+
+It would be interesting to plot this function over the entire data.
+
+
+#### Plotting Above Model Determined by Panel Regression Over All Data
+
+```{r}
+# Creating a column on tcy that is this function shown above:
+
+tcy$experimental_fit <-  (-3.13244*tcy$meantmaxsq) + (167.96992*tcy$meantmax) - 2098.621
+
+
+```
+
+
+```{r}
+# Plotting the data and the above model:
+
+ggplot(data = tcy)+
+  geom_point(mapping = aes(x = meantmax, y = yield)) +
+  geom_line(mapping = aes(x = meantmax, y = experimental_fit),
+            color = "blue",
+            size = 1.25)+
+  theme_bw() +
+  labs(x = "Average Daily Maximum Temperature for Summer Months (°C)",
+       y = "Annual Corn Yield (bu/acre)",
+       title = "Corn Yield vs. Ave. Daily Max. Summer Temp.",
+       subtitle = "All Iowa Counties, 1981 - 2018")
+
+```
+
+
+
+### Question 5 -- Soybeans: Download NASS data on soybean yields and explore either a time series relationship for a given county, the cross-sectional relationship for a given year, or a panel across all counties and years.
+
+
+#### Downloading Soybean Data
+
+```{r corn yield download and convert to numeric, message = FALSE, warning = FALSE, results = 'hide'}
+
+## set our API key with NASS
+nassqs_auth(key = "6C0A99BB-3CB7-3E99-A699-B9DB7FDB8D16")
+
+## parameters to query on
+params2 <- list(commodity_desc = "SOYBEANS", statisticcat_desc = "PRODUCTION",
+              prodn_practice_desc = "ALL PRODUCTION PRACTICES",
+              year__GE = 1981, state_alpha = "IA")
+
+# download
+sbyieldsall <- nassqs_yields(params2)
+
+#convert to numeric
+sbyieldsall$county_ansi <- as.numeric(sbyieldsall$county_ansi)
+sbyieldsall$yield <- as.numeric(sbyieldsall$Value)
+
+```
+
+
+```{r clean and filter dataset, message = FALSE, warning = FALSE}
+#clean and filter dataset
+sbyields <- select(sbyieldsall,county_ansi, 
+                     county_name, yield, year)%>%
+  filter(!is.na(county_ansi) & !is.na(yield))
+
+# make a tibble
+sbyields <- tibble(cornyields) %>%
+  dplyr::group_by(county_name) %>%
+  dplyr::mutate(datapoints = n())%>%
+  arrange(-datapoints)
+
+```
+
+
+#### Looking at the Trend of Soybeans Over Time in Sioux County
+
+```{r 1a}
+# sifting out to have only the Winneshiek data
+sx_uncln <- sbyields %>%
+  filter(county_name == "SIOUX")
+#making sure that there aren't any rows with NAs:
+sx <- na.omit(sx_uncln) 
+
+```
+
+
+```{r}
+# Fitting linear regression for time trend:
+lm_sx <- lm(yield ~ year, data = sx)
+sx$linear <- lm_sx$fitted.values
+
+summary(lm_sx)
+
+```
+
+According the summary statistics for the linear regression model fitted to the yield ~ year data for Sioux County, there is indeed a quite significant time trend.  The slope has a value of 2.7852 yield units increase per year, and the p-value for that slope is 4.86e-16.    
+
+
+```{r}
+# plotting yield ~ time along with linear regression:
+ggplot(sx) +
+  geom_point(mapping = aes(x = year, y = yield)) +
+  geom_line(mapping = aes(x = year, y = linear)) +
+  theme_bw() +
+  labs(x = "year", y = "Annual Soybean Yield (bu/acre)")+
+  ggtitle("Annual Soybean Yield Over Time for Sioux County, Iowa")
+
+```
+
+
+
+#### Examining whether rate of yield is slowing or decreasing.   
+
+```{r}
+## Fitting quadratic time trend
+sx$yearsq <- sx$year^2
+
+qd_sx <- lm(yield ~ (year + yearsq), data = sx)
+sx$quadratic <- qd_sx$fitted.values
+
+summary(qd_sx)
+
+```
+
+
+We do not find evidence that yield is either slowing or growing with each year.  
+
+
+
+### Bonus #1: Find a package to make a county map of Iowa displaying some sort of information about yields or weather. Interpret your map.
+
+### Bonus #2: Challenge question - map trends in corn yields by county across Iowa. Interpret your map.

@@ -1,0 +1,19 @@
+--- 
+title: "ESS 580 - Intro to Data Science, Final Project"
+author: "Daniel Cleveland"
+date: "`r Sys.Date()`"
+site: bookdown::bookdown_site
+output: bookdown::gitbook
+documentclass: book
+bibliography: [book.bib, packages.bib]
+biblio-style: apalike
+link-citations: yes
+github-repo: rstudio/bookdown-demo
+description: "This is a simple bookdown created to present the first six data science assignments of ESS 580, Spring 2022."
+---
+
+# Introduction
+
+This book compiles six of seven different assignments given in the Spring 2022 semester Introduction to Environmental Data Science (ESS 580) course offered at Colorado State University.
+
+
